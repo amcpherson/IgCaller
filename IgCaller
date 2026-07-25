@@ -15,8 +15,8 @@ parser.add_argument('-v', '--version', action='version', version="%(prog)s v1.4-
 parser.add_argument('-I', '--inputsFolder',
 					dest = "inputsFolder",
 					action = "store",
-					required=True,
-					help = "Path to folder containing IgCaller reference files") 
+					default = None,
+					help = "Path to folder containing IgCaller reference files [default: IgCaller_reference_files/ next to this script]") 
 
 parser.add_argument('-V', '--genomeVersion',
 					dest = "genomeVersion",
@@ -177,6 +177,10 @@ parser.add_argument('--singleCell',
 options = parser.parse_args()
 
 inputsFolder = options.inputsFolder
+if inputsFolder is None:
+	inputsFolder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "IgCaller_reference_files")
+if not os.path.isdir(inputsFolder):
+	sys.exit("IgCaller: error message... Reference files folder not found: %s" % inputsFolder)
 genomeVersion = options.genomeVersion
 chrAnnot = options.chrAnnot
 originalBamT = options.bamT
