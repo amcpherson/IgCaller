@@ -2,6 +2,7 @@
 
 # Modules
 import argparse
+import os
 import subprocess
 import sys
 import glob
@@ -207,7 +208,7 @@ singleCell = options.singleCell
 # 0) Prepare some variables and files:
 print("IgCaller: checking inputs and outputs...")
 ## Import IgCaller defined dictionaries and functions from IgCaller_reference_files:
-sys.path.insert(0, inputsFolder)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "IgCaller_reference_files"))
 from IgCaller_functions import *
 
 ## hg19 or hg38 regions of the IG loci:
