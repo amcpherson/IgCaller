@@ -39,7 +39,7 @@ tripletsToAA = {'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M',
 # functions
 def smithwaterman(x, y, match_score=5, mismatch_cost=4, gap_cost=8):
     # scoring matrix
-	M = np.zeros((len(x) + 1, len(y) + 1), np.int) # +1 because of the zero column and zero row
+	M = np.zeros((len(x) + 1, len(y) + 1), int) # +1 because of the zero column and zero row
 	for i, j in itertools.product(range(1, M.shape[0]), range(1, M.shape[1])): 
 		match = M[i - 1, j - 1] + (match_score if x[i - 1] == y[j - 1] else - mismatch_cost)
 		delete = M[i - 1, j] - gap_cost
