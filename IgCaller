@@ -167,6 +167,12 @@ parser.add_argument('-mncPoN', '--maxNumberCountInPoN',
 					default = "2",
 					help = "Maximum number of count in panel of normals (PoN) in order to be considered as high confidence [default=2]")
 
+parser.add_argument('--singleCell', 
+					dest = "singleCell",
+					action = "store_true",
+					default = False,
+					help = "Enable single-cell mode: extract CB barcodes from reads and output per-event barcode tables")
+
 options = parser.parse_args()
 
 inputsFolder = options.inputsFolder
@@ -196,6 +202,7 @@ threadsForSamtools = options.threadsForSamtools
 keepMiniIgBams = options.keepMiniIgBams
 seq = options.seq
 shortV = options.shortV
+singleCell = options.singleCell
 
 # 0) Prepare some variables and files:
 print("IgCaller: checking inputs and outputs...")
@@ -265,7 +272,7 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 	# 3) Convert SAM file to annotated table and write to disc:
 	## Take samfile, get columns of interest and anotate read with large insert size (insertSize) and split/soft clipped (split) reads 
 	annot_table = miniSamT.replace(".sam", "_splitinsert.tsv")
-	store = convertSamToAnnotatedTable(miniSamT, chromGene, GENE)
+	store, read_barcodes = convertSamToAnnotatedTable(miniSamT, chromGene, GENE)
 	ANNOT_TABLE = open(annot_table, "w")
 	for read, data in store.items(): ANNOT_TABLE.write("%s\n" %"\t".join([str(x) for x in data]))
 	ANNOT_TABLE.close()
@@ -308,6 +315,15 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 		Vseq.write("\n".join(['\t'.join(map(str, (item[i] for i in list(range(0,14))+list(range(15,22))+[14]))) for item in information]))
 		Vseq.close()
 
+		# Single-cell barcode output:
+		if singleCell:
+			barcode_rows = collectBarcodesForEvents(JV_list, information, read_barcodes, GENE)
+			bcOut = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+"_barcodes.tsv"), "w")
+			bcOut.write("Event\tMechanism\tRead_name\tCell_barcode\n")
+			for row in barcode_rows:
+				bcOut.write("\t".join(row)+"\n")
+			bcOut.close()
+
 		if len(trip) != 0:
 			SUMM.write("\n".join([GENE+"\t"+item+"\t"+'\t'.join(map(str, map(trip[item].__getitem__, [0,19,20,13,15,16,17,18,14]))) for item in trip])+"\n")
 		else:
@@ -323,6 +339,15 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 			Vseq.write("\n".join(['\t'.join(map(str, item)) for item in class_switch])+"\n")					
 		Vseq.close()
 		
+		# Single-cell barcode output for CSR:
+		if singleCell:
+			barcode_rows = collectBarcodesForCSR(JV_list, data, read_barcodes, bedFile, GENE)
+			bcOut = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+"_barcodes.tsv"), "w")
+			bcOut.write("Event\tMechanism\tRead_name\tCell_barcode\n")
+			for row in barcode_rows:
+				bcOut.write("\t".join(row)+"\n")
+			bcOut.close()
+		
 		if len(class_switch_filt) == 0:
 			SUMM.write("CSR\tIGHM\tNo CSR found"+"\tNA"*8+"\n")
 		else:
@@ -332,11 +357,19 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 
 # 15) Genome-wide IG translocations
 print("IgCaller: genome-wide IG rearrangements...")
-translocationsALL, translocationsPASS = getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForSamtools, bamT, bamN, chrom, coordsToSubset, tumorPurity, mntonco, mntoncoPass, mnnonco, mapqOnco, mncPoN)
+translocationsALL, translocationsPASS, onco_barcode_rows = getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForSamtools, bamT, bamN, chrom, coordsToSubset, tumorPurity, mntonco, mntoncoPass, mnnonco, mapqOnco, mncPoN, singleCell)
 
 Vseq = open(miniSamT.replace("_miniSam.sam", "_output_oncogenic_IG_rearrangements.tsv"), "w")
 Vseq.write("\n".join(translocationsALL))		
 Vseq.close()
+
+# Single-cell barcode output for oncogenic IG rearrangements:
+if singleCell:
+	bcOut = open(miniSamT.replace("_miniSam.sam", "_output_oncogenic_IG_rearrangements_barcodes.tsv"), "w")
+	bcOut.write("Event\tRead_name\tCell_barcode\n")
+	for row in onco_barcode_rows:
+		bcOut.write("\t".join(row)+"\n")
+	bcOut.close()
 
 if len(translocationsPASS) > 0: SUMM.write("\n".join(translocationsPASS))
 else: SUMM.write("Oncogenic IG rearrangement\tNo rearrangements found"+"\tNA"*9+"\n")

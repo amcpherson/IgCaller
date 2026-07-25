@@ -98,17 +98,30 @@ def flagToCustomBinary (flag):
 	binary = ("0"*(12-len(binary)))+binary
 	return(binary[::-1])
 	
+def extractCB(fields):
+	"""Extract CB:Z: cell barcode tag from SAM optional fields."""
+	for tag in fields:
+		if tag.startswith("CB:Z:"):
+			return tag[5:]
+	return None
+
 def convertSamToAnnotatedTable(miniSamT, chromGene, GENE):
 	
 	samfile = open(miniSamT, "r")
 	
 	store = {}
+	read_barcodes = {}
 
 	for i in samfile:
 		
 		w = i.rstrip("\n").split("\t")
 		
 		if w[5] != "*" and w[6] == "=":
+			
+			# Extract cell barcode before truncating optional fields
+			cb = extractCB(w[11:])
+			if cb is not None:
+				read_barcodes[w[0]] = cb
 			
 			sa = []
 			for x in (w[11:]): # analyse values after qualities, starting with SA...
@@ -252,8 +265,43 @@ def convertSamToAnnotatedTable(miniSamT, chromGene, GENE):
 					else:
 						store[w[0]][15] = w[15]
 	
-	return(store)
+	return(store, read_barcodes)
 	
+def collectBarcodesForEvents(JV_list, information, read_barcodes, GENE):
+	"""Collect cell barcodes for each rearrangement event.
+	Returns a list of [event_id, read_name, cell_barcode] rows."""
+	barcode_rows = []
+	for info in information:
+		event_id = info[0]  # Genes annotation (e.g. IGHJ4 - IGHD3-10 - IGHV3-23)
+		mechanism = info[1]
+		# Find reads supporting this event
+		J = info[0].split(" - ")[0]
+		V = info[0].split(" - ")[-1]  # last element (skips D if present)
+		for readLine in JV_list:
+			readList = readLine.rstrip("\n").split("\t")
+			read_name = readList[0]
+			if ( (J == readList[16] or J == readList[18]) and (V == readList[17] or V == readList[19]) ) or \
+			   ( (J == readList[17] or J == readList[19]) and (V == readList[16] or V == readList[18]) ):
+				cb = read_barcodes.get(read_name, None)
+				if cb is not None:
+					barcode_rows.append([event_id, mechanism, read_name, cb])
+	return barcode_rows
+
+def collectBarcodesForCSR(JV_list, data, read_barcodes, bedFile, GENE):
+	"""Collect cell barcodes for CSR events.
+	Returns a list of [event_id, read_name, cell_barcode] rows."""
+	barcode_rows = []
+	for readLine in JV_list:
+		readList = readLine.rstrip("\n").split("\t")
+		read_name = readList[0]
+		cb = read_barcodes.get(read_name, None)
+		if cb is not None:
+			# Event ID from the gene pair
+			genes = [x for x in readList[16:20] if x != "NA"]
+			event_id = " - ".join(genes) if genes else "CSR"
+			barcode_rows.append([event_id, "CSR", read_name, cb])
+	return barcode_rows
+
 def findJandVgenes(annot_table, bedFile, GENE):
 	insertsplit = open(annot_table, "r")
 	
@@ -2000,7 +2048,7 @@ def classSwitchAnalysis(data, bedFile, baseq, chromGene, bamT, bamN, pathToSamto
 	
 	return(class_switch, class_switch_filt, reductionMeans)
 
-def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForSamtools, bamT, bamN, chrom, coordsToSubset, tumorPurity, mntonco, mntoncoPass, mnnonco, mapqOnco, mncPoN):
+def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForSamtools, bamT, bamN, chrom, coordsToSubset, tumorPurity, mntonco, mntoncoPass, mnnonco, mapqOnco, mncPoN, singleCell=False):
 	
 	chrom14 = coordsToSubset.split(" ")[0].split(":")[1].split("-") # IGH region 
 	chrom22 = coordsToSubset.split(" ")[1].split(":")[1].split("-") # IGL region
@@ -2022,11 +2070,24 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 	dicForTranslocations[chrom+"14"] = {}
 	dicForTranslocations[chrom+"2"] = {}
 	dicForTranslocations[chrom+"22"] = {}
+	
+	# Single-cell: track read name and barcode per translocation entry
+	onco_read_barcodes = {}  # {(inChrom, outChrom, index_in_list): [(read_name, CB), ...]}
+	onco_read_info = {}  # {inChrom: {outChrom: [[posInChrom, strandInChrom, posOutChrom, strandOutChrom, read_name, CB], ...]}}
+	if singleCell:
+		onco_read_info[chrom+"14"] = {}
+		onco_read_info[chrom+"2"] = {}
+		onco_read_info[chrom+"22"] = {}
 
 	samfile = open(samT, "r")
 	for i in samfile:
 		
 		w = i.rstrip("\n").split("\t")
+		
+		# Extract cell barcode before truncating optional fields
+		read_name_onco = w[0] if singleCell else None
+		cb_onco = extractCB(w[11:]) if singleCell else None
+		
 		sa=[]
 		for x in (w[11:]): # get SA:... after qualities
 			if x.startswith("SA:Z"):
@@ -2069,6 +2130,13 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 				dicForTranslocations[inChrom][outChrom].append([posInChrom, strandInChrom, posOutChrom, strandOutChrom])
 			else:
 				dicForTranslocations[inChrom][outChrom] = [[posInChrom, strandInChrom, posOutChrom, strandOutChrom]]
+			
+			# Single-cell: store read name and barcode alongside position info
+			if singleCell and cb_onco is not None:
+				if outChrom in onco_read_info[inChrom]:
+					onco_read_info[inChrom][outChrom].append([posInChrom, strandInChrom, posOutChrom, strandOutChrom, read_name_onco, cb_onco])
+				else:
+					onco_read_info[inChrom][outChrom] = [[posInChrom, strandInChrom, posOutChrom, strandOutChrom, read_name_onco, cb_onco]]
 				
 	samfile.close()
 	subprocess.call("rm "+samT, shell=True)	
@@ -2370,4 +2438,37 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 			else: traAnnot = traAnnot+" ["+strandA+"/"+strandB+"] ["+geneID+"]"
 			translocationsPASS.append("\t".join(["Oncogenic IG rearrangement", traAnnot, mechanism, str(score)+" ("+str(scoreNormal)+") ["+str(ponCount)+"] ["+repeatMasker+"]"]+["NA"]*7))
 	
-	return(translocationsALL, translocationsPASS)
+	# 5. Single-cell: match barcoded reads to final translocation events
+	onco_barcode_rows = []
+	if singleCell:
+		for i in translocationsList:
+			# Determine event annotation (same logic as above)
+			if i[0] == i[4]:
+				if int((i[1] if i[3] == "-" else i[2])) < int((i[5] if i[7] == "-" else i[6])):
+					idxA = 0; idxB = 4
+				else:
+					idxA = 4; idxB = 0
+				chrA_sc = i[idxA]; strandA_sc = i[idxA+3]; positionA_sc = i[idxA + (2 if strandA_sc == "+" else 1)]
+				chrB_sc = i[idxB]; strandB_sc = i[idxB+3]; positionB_sc = i[idxB + (2 if strandB_sc == "+" else 1)]
+			else:
+				chrA_sc = i[0]; strandA_sc = i[3]; positionA_sc = i[2] if i[3] == "+" else i[1]
+				chrB_sc = i[4]; strandB_sc = i[7]; positionB_sc = i[6] if i[7] == "+" else i[5]
+			
+			event_key = i[0]+":"+i[1]+"-"+i[2]+"/"+i[4]+":"+i[5]+"-"+i[6]
+			
+			# Find barcoded reads matching this translocation's position range
+			inChrom_sc = i[0]
+			outChrom_sc = i[4]
+			if inChrom_sc in onco_read_info and outChrom_sc in onco_read_info[inChrom_sc]:
+				for read_entry in onco_read_info[inChrom_sc][outChrom_sc]:
+					rPos1 = int(read_entry[0])
+					rStrand1 = read_entry[1]
+					rPos2 = int(read_entry[2])
+					rStrand2 = read_entry[3]
+					rName = read_entry[4]
+					rCB = read_entry[5]
+					if (abs(rPos1 - int(i[1])) < 200 or abs(rPos1 - int(i[2])) < 200) and rStrand1 == i[3] and \
+					   (abs(rPos2 - int(i[5])) < 1000 or abs(rPos2 - int(i[6])) < 1000) and rStrand2 == i[7]:
+						onco_barcode_rows.append([event_key, rName, rCB])
+	
+	return(translocationsALL, translocationsPASS, onco_barcode_rows)
