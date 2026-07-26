@@ -269,11 +269,10 @@ def convertSamToAnnotatedTable(miniSamT, chromGene, GENE):
 	
 def collectBarcodesForEvents(JV_list, information, read_barcodes, GENE):
 	"""Collect cell barcodes for each rearrangement event.
-	Returns a list of [event_id, read_name, cell_barcode] rows."""
+	Returns a list of [event_id, read_name, cell_barcode] rows.
+	event_id is the integer index into the information list (matching row order in the main output TSV)."""
 	barcode_rows = []
-	for info in information:
-		event_id = info[0]  # Genes annotation (e.g. IGHJ4 - IGHD3-10 - IGHV3-23)
-		mechanism = info[1]
+	for event_id, info in enumerate(information):
 		# Find reads supporting this event
 		J = info[0].split(" - ")[0]
 		V = info[0].split(" - ")[-1]  # last element (skips D if present)
@@ -284,22 +283,30 @@ def collectBarcodesForEvents(JV_list, information, read_barcodes, GENE):
 			   ( (J == readList[17] or J == readList[19]) and (V == readList[16] or V == readList[18]) ):
 				cb = read_barcodes.get(read_name, None)
 				if cb is not None:
-					barcode_rows.append([event_id, mechanism, read_name, cb])
+					barcode_rows.append([str(event_id), read_name, cb])
 	return barcode_rows
 
-def collectBarcodesForCSR(JV_list, data, read_barcodes, bedFile, GENE):
+def collectBarcodesForCSR(JV_list, class_switch, read_barcodes, bedFile, GENE):
 	"""Collect cell barcodes for CSR events.
-	Returns a list of [event_id, read_name, cell_barcode] rows."""
+	Returns a list of [event_id, read_name, cell_barcode] rows.
+	event_id is the integer index into the class_switch list (matching row order in the main output TSV)."""
+	# Build a lookup from isotype gene name to event_id
+	isotype_to_event_id = {}
+	for event_id, cs_event in enumerate(class_switch):
+		isotype_to_event_id[cs_event[0]] = event_id  # cs_event[0] is the isotype gene name (e.g. IGHG1)
+
 	barcode_rows = []
 	for readLine in JV_list:
 		readList = readLine.rstrip("\n").split("\t")
 		read_name = readList[0]
 		cb = read_barcodes.get(read_name, None)
 		if cb is not None:
-			# Event ID from the gene pair
+			# Check which CSR event this read belongs to by matching gene annotations
 			genes = [x for x in readList[16:20] if x != "NA"]
-			event_id = " - ".join(genes) if genes else "CSR"
-			barcode_rows.append([event_id, "CSR", read_name, cb])
+			for gene in genes:
+				if gene in isotype_to_event_id:
+					barcode_rows.append([str(isotype_to_event_id[gene]), read_name, cb])
+					break
 	return barcode_rows
 
 def findJandVgenes(annot_table, bedFile, GENE):
@@ -2271,9 +2278,12 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 	translocationsList = sorted(translocationsList, key=operator.itemgetter(8), reverse=True)
 	translocationsALL = list()
 	translocationsPASS = list()
-	translocationsALL.append("\t".join(["Rearrangement", "Mechanism", "Score", "Reads in normal", "Count in PoN", "RepeatMasker", "ChrA", "PositionA", "StrandA", "ChrB", "PositionB", "StrandB", "GeneID", "Distance to gene"]))
+	translocationsALL.append("\t".join(["Event_ID", "Rearrangement", "Mechanism", "Score", "Reads in normal", "Count in PoN", "RepeatMasker", "ChrA", "PositionA", "StrandA", "ChrB", "PositionB", "StrandB", "GeneID", "Distance to gene"]))
 	
-	for i in translocationsList:
+	# Map from translocationsList index to event_id for barcode matching
+	onco_event_id_map = {}
+	
+	for event_id, i in enumerate(translocationsList):
 		
 		if i[0] == i[4]:
 			if int((i[1] if i[3] == "-" else i[2])) < int((i[5] if i[7] == "-" else i[6])):
@@ -2430,7 +2440,8 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 		
 		
 		# return all
-		translocationsALL.append("\t".join([traAnnot, mechanism, str(score), str(scoreNormal), str(ponCount), repeatMasker, chrA, positionA, strandA, chrB, positionB, strandB, geneID, str(minDistance)]))
+		onco_event_id_map[id(i)] = event_id
+		translocationsALL.append("\t".join([str(event_id), traAnnot, mechanism, str(score), str(scoreNormal), str(ponCount), repeatMasker, chrA, positionA, strandA, chrB, positionB, strandB, geneID, str(minDistance)]))
 		
 		# return pass
 		if score >= mntoncoPass and ( scoreNormal == "NA" or scoreNormal <= mnnonco ) and ponCount <= mncPoN:
@@ -2442,19 +2453,8 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 	onco_barcode_rows = []
 	if singleCell:
 		for i in translocationsList:
-			# Determine event annotation (same logic as above)
-			if i[0] == i[4]:
-				if int((i[1] if i[3] == "-" else i[2])) < int((i[5] if i[7] == "-" else i[6])):
-					idxA = 0; idxB = 4
-				else:
-					idxA = 4; idxB = 0
-				chrA_sc = i[idxA]; strandA_sc = i[idxA+3]; positionA_sc = i[idxA + (2 if strandA_sc == "+" else 1)]
-				chrB_sc = i[idxB]; strandB_sc = i[idxB+3]; positionB_sc = i[idxB + (2 if strandB_sc == "+" else 1)]
-			else:
-				chrA_sc = i[0]; strandA_sc = i[3]; positionA_sc = i[2] if i[3] == "+" else i[1]
-				chrB_sc = i[4]; strandB_sc = i[7]; positionB_sc = i[6] if i[7] == "+" else i[5]
-			
-			event_key = i[0]+":"+i[1]+"-"+i[2]+"/"+i[4]+":"+i[5]+"-"+i[6]
+			if id(i) not in onco_event_id_map: continue
+			event_id = onco_event_id_map[id(i)]
 			
 			# Find barcoded reads matching this translocation's position range
 			inChrom_sc = i[0]
@@ -2469,6 +2469,6 @@ def getIgTranslocations(genomeVersion, inputsFolder, pathToSamtools, threadsForS
 					rCB = read_entry[5]
 					if (abs(rPos1 - int(i[1])) < 200 or abs(rPos1 - int(i[2])) < 200) and rStrand1 == i[3] and \
 					   (abs(rPos2 - int(i[5])) < 1000 or abs(rPos2 - int(i[6])) < 1000) and rStrand2 == i[7]:
-						onco_barcode_rows.append([event_key, rName, rCB])
+						onco_barcode_rows.append([str(event_id), rName, rCB])
 	
 	return(translocationsALL, translocationsPASS, onco_barcode_rows)

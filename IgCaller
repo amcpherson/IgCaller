@@ -316,15 +316,15 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 		
 		# 13) Save output:
 		Vseq = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+".tsv"), "w")
-		Vseq.write("Genes\tMechanisms\tN_split\tN_insertSize\tStart_J\tEnd_J\tN_split_rescued_J\tStart_V\tEnd_V\tN_split_rescued_V\tSeq_J\tSeq_D\tSeq_V\tSeq_V_normal\tSeq\tV-gene_pct_identity_to_germline\tLength_considered_identity\tFunctionality\tJunction_amino_acid_sequence\tScore\tMQ\tV-PhaseInfo\n")
-		Vseq.write("\n".join(['\t'.join(map(str, (item[i] for i in list(range(0,14))+list(range(15,22))+[14]))) for item in information]))
+		Vseq.write("Event_ID\tGenes\tMechanisms\tN_split\tN_insertSize\tStart_J\tEnd_J\tN_split_rescued_J\tStart_V\tEnd_V\tN_split_rescued_V\tSeq_J\tSeq_D\tSeq_V\tSeq_V_normal\tSeq\tV-gene_pct_identity_to_germline\tLength_considered_identity\tFunctionality\tJunction_amino_acid_sequence\tScore\tMQ\tV-PhaseInfo\n")
+		Vseq.write("\n".join([str(eid)+'\t'+'\t'.join(map(str, (item[i] for i in list(range(0,14))+list(range(15,22))+[14]))) for eid, item in enumerate(information)]))
 		Vseq.close()
 
 		# Single-cell barcode output:
 		if singleCell:
 			barcode_rows = collectBarcodesForEvents(JV_list, information, read_barcodes, GENE)
 			bcOut = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+"_barcodes.tsv"), "w")
-			bcOut.write("Event\tMechanism\tRead_name\tCell_barcode\n")
+			bcOut.write("Event_ID\tRead_name\tCell_barcode\n")
 			for row in barcode_rows:
 				bcOut.write("\t".join(row)+"\n")
 			bcOut.close()
@@ -339,16 +339,16 @@ for GENE in ["IGH", "IGK", "IGL", "CSR"]:
 		class_switch, class_switch_filt, reductionMeans = classSwitchAnalysis(data, bedFile, baseq, chromGene, bamT, bamN, pathToSamtools, tumorPurity)
 		
 		Vseq = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+".tsv"), "w")
-		Vseq.write("Genes\tClass\tScore\tAdjusted_mean_pre_break\tAdjusted_mean_post_break\tPvalue\tPct_reduction_adjusted_means\n")
+		Vseq.write("Event_ID\tGenes\tClass\tScore\tAdjusted_mean_pre_break\tAdjusted_mean_post_break\tPvalue\tPct_reduction_adjusted_means\n")
 		if len(class_switch) > 0:
-			Vseq.write("\n".join(['\t'.join(map(str, item)) for item in class_switch])+"\n")					
+			Vseq.write("\n".join([str(eid)+'\t'+'\t'.join(map(str, item)) for eid, item in enumerate(class_switch)])+"\n")					
 		Vseq.close()
 		
 		# Single-cell barcode output for CSR:
 		if singleCell:
-			barcode_rows = collectBarcodesForCSR(JV_list, data, read_barcodes, bedFile, GENE)
+			barcode_rows = collectBarcodesForCSR(JV_list, class_switch, read_barcodes, bedFile, GENE)
 			bcOut = open(miniSamT.replace("_miniSam.sam", "_output_"+GENE+"_barcodes.tsv"), "w")
-			bcOut.write("Event\tMechanism\tRead_name\tCell_barcode\n")
+			bcOut.write("Event_ID\tRead_name\tCell_barcode\n")
 			for row in barcode_rows:
 				bcOut.write("\t".join(row)+"\n")
 			bcOut.close()
@@ -371,7 +371,7 @@ Vseq.close()
 # Single-cell barcode output for oncogenic IG rearrangements:
 if singleCell:
 	bcOut = open(miniSamT.replace("_miniSam.sam", "_output_oncogenic_IG_rearrangements_barcodes.tsv"), "w")
-	bcOut.write("Event\tRead_name\tCell_barcode\n")
+	bcOut.write("Event_ID\tRead_name\tCell_barcode\n")
 	for row in onco_barcode_rows:
 		bcOut.write("\t".join(row)+"\n")
 	bcOut.close()
